@@ -1,0 +1,7 @@
+#pragma once
+
+#include <stdint.h>
+
+void c3_zero_led_init();
+void c3_zero_led_set(uint8_t r, uint8_t g, uint8_t b);
+void c3_zero_led_clear();
