@@ -1,5 +1,6 @@
 #pragma once
 
+#include "esp_bt.h"
 #include "esp_err.h"
 #include <stdint.h>
 #include <stdio.h>
@@ -21,6 +22,7 @@ struct bt_callbacks {
   void (*on_bt_adv_complete)();
 };
 
-esp_err_t bt_init(const char *bt_dev_name, const char *adv_uri, struct bt_callbacks cbs,
-                  const struct ble_gatt_svc_def *gatt_svcs);
+// tx_power: BLE TX power level, defaults to ESP_PWR_LVL_P3, min is ESP_PWR_LVL_N24
+esp_err_t bt_init(const char *bt_dev_name, const char *adv_uri, esp_power_level_t tx_power,
+                  struct bt_callbacks cbs, const struct ble_gatt_svc_def *gatt_svcs);
 void bt_start_advertising();

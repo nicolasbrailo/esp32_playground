@@ -3,7 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "bt_helpers.h"
 #include "custom_panic.h"
+#include "esp_bt.h"
 #include "esp_log.h"
 static const char *TAG = "BT base";
 
@@ -36,6 +38,7 @@ struct bt_callbacks g_cbs;
 static uint8_t *g_uri = NULL;
 static size_t g_uri_len = 0;
 static uint32_t g_passkey;
+static esp_power_level_t g_tx_power;
 
 // BLE stack is working and ready
 static void on_ble_sync(void) {
@@ -64,6 +67,16 @@ static void on_ble_sync(void) {
   char addr_str[18] = {0};
   bt_addr_fmt(addr_str, g_addr_val);
   ESP_LOGI(TAG, "NimBLE BLE stack sync, address %s", addr_str);
+
+  /* DEFAULT covers any power type not explicitly set, including future connections. */
+  esp_err_t pwr_err = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, g_tx_power);
+  if (pwr_err != ESP_OK) {
+    ESP_LOGE(TAG, "failed to set default BLE TX power: %d", pwr_err);
+  }
+  esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, g_tx_power);
+  esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_SCAN, g_tx_power);
+  ESP_LOGI(TAG, "Set BLE TX power to %d (%d dBm)", g_tx_power, -24 + 3 * (int)g_tx_power);
+
   g_cbs.on_ble_sync_cb(g_own_addr_type, g_addr_val);
 }
 
@@ -81,9 +94,10 @@ static void nimble_host_task(void *param) {
   vTaskDelete(NULL);
 }
 
-esp_err_t bt_init(const char *bt_dev_name, const char *adv_uri, struct bt_callbacks cbs,
-                  const struct ble_gatt_svc_def *gatt_svcs) {
+esp_err_t bt_init(const char *bt_dev_name, const char *adv_uri, esp_power_level_t tx_power,
+                  struct bt_callbacks cbs, const struct ble_gatt_svc_def *gatt_svcs) {
   g_cbs = cbs;
+  g_tx_power = tx_power;
   g_passkey = 123456;
   if (g_passkey < 100000 || g_passkey > 999999) {
     custom_panic("BT pin needs to be 6 digits");
@@ -291,7 +305,8 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
   switch (event->type) {
   /* Disconnect event */
   case BLE_GAP_EVENT_DISCONNECT:
-    ESP_LOGI(TAG, "Disconnected from peer; reason=%d", event->disconnect.reason);
+    ESP_LOGI(TAG, "Disconnected from peer; reason=%d (%s)", event->disconnect.reason,
+             bt_hci_disconnect_reason_str(event->disconnect.reason));
     g_cbs.on_bt_disconnect(&event->disconnect.conn);
     return 0;
 
@@ -307,9 +322,9 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
       /* Print notification info on error */
       ESP_LOGD(TAG,
                "notify event; conn_handle=%d attr_handle=%d "
-               "status=%d is_indication=%d",
+               "status=%d (%s) is_indication=%d",
                event->notify_tx.conn_handle, event->notify_tx.attr_handle, event->notify_tx.status,
-               event->notify_tx.indication);
+               bt_att_err_str(event->notify_tx.status), event->notify_tx.indication);
     }
     return 0;
 
