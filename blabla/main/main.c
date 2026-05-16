@@ -1,3 +1,4 @@
+#include <stdbool.h>
 #include <string.h>
 
 #include "c3_zero_led.h"
@@ -10,17 +11,40 @@
 static const char *TAG = "blabla";
 
 #include "bt.h"
+#include "bt_gatt_read_id.h"
 #include "bt_led.h"
 
 #define MAX_ACTIVE_CONNS CONFIG_BT_NIMBLE_MAX_CONNECTIONS
-static uint16_t g_active_conns[MAX_ACTIVE_CONNS];
+#define MAX_NAME_LEN 32
+
+struct conn_entry {
+  uint16_t handle;
+  bool has_id_addr;
+  uint8_t id_addr_type;
+  uint8_t id_addr[6];
+  bool has_name;
+  char name[MAX_NAME_LEN];
+};
+
+static struct conn_entry g_active_conns[MAX_ACTIVE_CONNS];
 static size_t g_active_conn_count = 0;
 static SemaphoreHandle_t g_conns_lock = NULL;
+
+static struct conn_entry *find_conn_locked_(uint16_t handle) {
+  for (size_t i = 0; i < g_active_conn_count; ++i) {
+    if (g_active_conns[i].handle == handle) {
+      return &g_active_conns[i];
+    }
+  }
+  return NULL;
+}
 
 static void conn_table_add(uint16_t handle) {
   xSemaphoreTake(g_conns_lock, portMAX_DELAY);
   if (g_active_conn_count < MAX_ACTIVE_CONNS) {
-    g_active_conns[g_active_conn_count++] = handle;
+    struct conn_entry *e = &g_active_conns[g_active_conn_count++];
+    memset(e, 0, sizeof(*e));
+    e->handle = handle;
   } else {
     ESP_LOGW(TAG, "conn table full, dropping handle=%u", handle);
   }
@@ -30,10 +54,37 @@ static void conn_table_add(uint16_t handle) {
 static void conn_table_remove(uint16_t handle) {
   xSemaphoreTake(g_conns_lock, portMAX_DELAY);
   for (size_t i = 0; i < g_active_conn_count; ++i) {
-    if (g_active_conns[i] == handle) {
+    if (g_active_conns[i].handle == handle) {
       g_active_conns[i] = g_active_conns[--g_active_conn_count];
       break;
     }
+  }
+  xSemaphoreGive(g_conns_lock);
+}
+
+static void conn_table_set_id_addr(uint16_t handle, const ble_addr_t *addr) {
+  xSemaphoreTake(g_conns_lock, portMAX_DELAY);
+  struct conn_entry *e = find_conn_locked_(handle);
+  if (e != NULL) {
+    e->has_id_addr = true;
+    e->id_addr_type = addr->type;
+    memcpy(e->id_addr, addr->val, 6);
+  }
+  xSemaphoreGive(g_conns_lock);
+}
+
+static void on_device_name_read(uint16_t handle, const char *name, size_t len, void *arg) {
+  if (name == NULL || len == 0) {
+    ESP_LOGI(TAG, "device name unavailable for handle=%u", handle);
+    return;
+  }
+  xSemaphoreTake(g_conns_lock, portMAX_DELAY);
+  struct conn_entry *e = find_conn_locked_(handle);
+  if (e != NULL) {
+    size_t n = len < sizeof(e->name) - 1 ? len : sizeof(e->name) - 1;
+    memcpy(e->name, name, n);
+    e->name[n] = '\0';
+    e->has_name = true;
   }
   xSemaphoreGive(g_conns_lock);
 }
@@ -54,6 +105,12 @@ void on_bt_new_conn(const struct ble_gap_conn_desc *conn_desc) {
 }
 
 void on_bt_conn_bonded(const struct ble_gap_conn_desc *conn_desc) {
+  conn_table_set_id_addr(conn_desc->conn_handle, &conn_desc->peer_id_addr);
+  int rc = bt_gatt_read_device_name(conn_desc->conn_handle, on_device_name_read, NULL);
+  if (rc != 0) {
+    ESP_LOGW(TAG, "failed to start device name read for handle=%u, rc=%d",
+             conn_desc->conn_handle, rc);
+  }
   c3_zero_led_blink(/*n=*/2, /*on_ms=*/200, /*off_ms=*/100, /*r=*/0, /*g=*/90,  /*b=*/0);
 }
 
@@ -67,7 +124,7 @@ void on_bt_adv_complete() { bt_start_advertising(); }
 
 static void rssi_log_task(void *arg) {
   for (;;) {
-    uint16_t snapshot[MAX_ACTIVE_CONNS];
+    struct conn_entry snapshot[MAX_ACTIVE_CONNS];
     size_t count;
 
     xSemaphoreTake(g_conns_lock, portMAX_DELAY);
@@ -80,11 +137,18 @@ static void rssi_log_task(void *arg) {
     } else {
       for (size_t i = 0; i < count; ++i) {
         int8_t rssi = 0;
-        int rc = ble_gap_conn_rssi(snapshot[i], &rssi);
+        int rc = ble_gap_conn_rssi(snapshot[i].handle, &rssi);
+        char addr_str[18] = "(unbonded)";
+        if (snapshot[i].has_id_addr) {
+          bt_addr_fmt(addr_str, snapshot[i].id_addr);
+        }
+        const char *name = snapshot[i].has_name ? snapshot[i].name : "(unknown)";
         if (rc == 0) {
-          ESP_LOGI(TAG, "RSSI: handle=%u %d dBm", snapshot[i], rssi);
+          ESP_LOGI(TAG, "handle=%u %d dBm peer=%s name=\"%s\"", snapshot[i].handle, rssi, addr_str,
+                   name);
         } else {
-          ESP_LOGW(TAG, "RSSI: handle=%u read failed, rc=%d", snapshot[i], rc);
+          ESP_LOGW(TAG, "handle=%u rssi rc=%d peer=%s name=\"%s\"", snapshot[i].handle, rc,
+                   addr_str, name);
         }
       }
     }
