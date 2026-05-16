@@ -1,12 +1,18 @@
 #include "bt.h"
 
+#include <stdlib.h>
+#include <string.h>
+
+#include "custom_panic.h"
 #include "esp_log.h"
 static const char *TAG = "BT base";
 
 #include "nvs_flash.h"
 
-#include "host/ble_gatt.h"
+// Error codes for ble here https://mynewt.apache.org/latest/network/ble_hs/ble_hs_return_codes.html
 #include "host/ble_hs.h"
+
+#include "host/ble_gatt.h"
 #include "host/util/util.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
@@ -26,6 +32,10 @@ void ble_store_config_init(void);
 static uint8_t g_own_addr_type;
 static uint8_t g_addr_val[6] = {0};
 struct bt_callbacks g_cbs;
+
+static uint8_t *g_uri = NULL;
+static size_t g_uri_len = 0;
+static uint32_t g_passkey;
 
 // BLE stack is working and ready
 static void on_ble_sync(void) {
@@ -71,8 +81,23 @@ static void nimble_host_task(void *param) {
   vTaskDelete(NULL);
 }
 
-esp_err_t bt_init(const char *bt_dev_name, struct bt_callbacks cbs, const struct ble_gatt_svc_def *gatt_svcs) {
+esp_err_t bt_init(const char *bt_dev_name, const char *adv_uri, struct bt_callbacks cbs,
+                  const struct ble_gatt_svc_def *gatt_svcs) {
   g_cbs = cbs;
+  g_passkey = 123456;
+  if (g_passkey < 100000 || g_passkey > 999999) {
+    custom_panic("BT pin needs to be 6 digits");
+  }
+
+  size_t adv_uri_len = strlen(adv_uri);
+  g_uri_len = adv_uri_len + 1;
+  g_uri = malloc(g_uri_len);
+  if (g_uri == NULL) {
+    ESP_LOGE(TAG, "failed to allocate URI buffer");
+    return ESP_ERR_NO_MEM;
+  }
+  g_uri[0] = BLE_GAP_URI_PREFIX_HTTPS;
+  memcpy(&g_uri[1], adv_uri, adv_uri_len);
 
   // NVS flash initialization, needed for BLE stack to store config+runtime state
   esp_err_t ret = nvs_flash_init();
@@ -97,6 +122,13 @@ esp_err_t bt_init(const char *bt_dev_name, struct bt_callbacks cbs, const struct
   ble_hs_cfg.sync_cb = on_ble_sync;
   ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
   ble_store_config_init();
+
+  /* Security manager configuration */
+  ble_hs_cfg.sm_io_cap = BLE_HS_IO_DISPLAY_ONLY;
+  ble_hs_cfg.sm_bonding = 1;
+  ble_hs_cfg.sm_mitm = 1;
+  ble_hs_cfg.sm_our_key_dist |= BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+  ble_hs_cfg.sm_their_key_dist |= BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
 
   // Init GAP
   ble_svc_gap_init();
@@ -133,8 +165,8 @@ static void print_conn_desc(const char *trigger, struct ble_gap_event *event, st
   char remote_addr_str[18] = {0};
   bt_addr_fmt(remote_addr_str, desc->peer_id_addr.val);
 
-  ESP_LOGI(TAG, "%s connection to remote addr %s %s (handle=%d, our_addr=%s)", trigger, remote_addr_str,
-           event->connect.status == 0 ? "established" : "success", desc->conn_handle, local_addr_str);
+  ESP_LOGI(TAG, "%s from remote addr %s %s (handle=%d, our_addr=%s)", trigger, remote_addr_str,
+           event->connect.status == 0 ? "success" : "established", desc->conn_handle, local_addr_str);
 
   /* Connection info */
   ESP_LOGD(TAG,
@@ -144,21 +176,52 @@ static void print_conn_desc(const char *trigger, struct ble_gap_event *event, st
            desc->sec_state.authenticated, desc->sec_state.bonded);
 }
 
-static int gap_event_handler(struct ble_gap_event *event, void *arg) {
-  int rc = 0;
-  struct ble_gap_conn_desc desc;
+static const char* gap_evt_str(struct ble_gap_event *evt) {
+  switch (evt->type) {
+    case BLE_GAP_EVENT_CONNECT: return "CONNECT";
+    case BLE_GAP_EVENT_DISCONNECT: return "DISCONNECT";
+    case BLE_GAP_EVENT_CONN_UPDATE: return "CONN_UPDATE";
+    case BLE_GAP_EVENT_NOTIFY_TX: return "NOTIFY_TX";
+    case BLE_GAP_EVENT_SUBSCRIBE: return "SUBSCRIBE";
+    case BLE_GAP_EVENT_MTU: return "MTU";
+    case BLE_GAP_EVENT_ENC_CHANGE: return "ENC_CHANGE";
+    case BLE_GAP_EVENT_REPEAT_PAIRING: return "REPEAT_PAIRING";
+    case BLE_GAP_EVENT_PASSKEY_ACTION: return "PASSKEY_ACTION";
+    default: return NULL;
+  }
+}
+static uint16_t gap_get_conn_hdl(struct ble_gap_event *evt) {
+  switch (evt->type) {
+    case BLE_GAP_EVENT_CONNECT: return evt->connect.conn_handle;
+    case BLE_GAP_EVENT_CONN_UPDATE: return evt->conn_update.conn_handle;
+    case BLE_GAP_EVENT_NOTIFY_TX: return evt->notify_tx.conn_handle;
+    case BLE_GAP_EVENT_SUBSCRIBE: return evt->subscribe.conn_handle;
+    case BLE_GAP_EVENT_MTU: return evt->mtu.conn_handle;
+    case BLE_GAP_EVENT_ENC_CHANGE: return evt->enc_change.conn_handle;
+    case BLE_GAP_EVENT_REPEAT_PAIRING: return evt->repeat_pairing.conn_handle;
+    case BLE_GAP_EVENT_PASSKEY_ACTION: return evt->passkey.conn_handle;
+    default: return -1;
+  }
+}
 
-  /* Handle different GAP event */
+// Same as gap_event_handler but the events here must have a valid connection
+static int gap_conn_event_handler(struct ble_gap_event *event, void *arg) {
+  if (gap_evt_str(event) == NULL) {
+    // Unmapped event that we can safely ignore
+    return 0;
+  }
+
+  struct ble_gap_conn_desc desc;
+  int rc = ble_gap_conn_find(gap_get_conn_hdl(event), &desc);
+  if (rc != 0) {
+    ESP_LOGE(TAG, "%s received, failed to find connection by handle, error: %d", gap_evt_str(event), rc);
+    return rc;
+  }
+
   switch (event->type) {
 
   case BLE_GAP_EVENT_CONNECT:
-    rc = ble_gap_conn_find(event->connect.conn_handle, &desc);
-    if (rc != 0) {
-      // TODO will this work for a failed connection?
-      ESP_LOGE(TAG, "Connection event received, but failed to find its handle, error: %d", rc);
-      return rc;
-    }
-    print_conn_desc("New", event, &desc);
+    print_conn_desc("New connection", event, &desc);
 
     /* Connection succeeded */
     if (event->connect.status == 0) {
@@ -180,26 +243,60 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
     }
     return 0;
 
+  /* Connection parameters update event */
+  case BLE_GAP_EVENT_CONN_UPDATE:
+    print_conn_desc("Updated connection", event, &desc);
+    return 0;
+
+  case BLE_GAP_EVENT_PASSKEY_ACTION:
+    print_conn_desc("Bond request", event, &desc);
+    if (event->passkey.params.action == BLE_SM_IOACT_DISP) {
+      /* Generate passkey */
+      struct ble_sm_io pkey = {0};
+      pkey.action = event->passkey.params.action;
+      pkey.passkey = g_passkey;
+      ESP_LOGI(TAG, "enter passkey %" PRIu32 " on the peer side", pkey.passkey);
+      rc = ble_sm_inject_io(event->passkey.conn_handle, &pkey);
+      if (rc != 0) {
+        ESP_LOGE(TAG, "failed to inject security manager io, error code: %d", rc);
+        return rc;
+      }
+    }
+    return rc;
+
+  case BLE_GAP_EVENT_ENC_CHANGE:
+    if (event->enc_change.status == 0) {
+      print_conn_desc("Encryption enabled", event, &desc);
+      g_cbs.on_bt_conn_bonded(&desc);
+    } else {
+      print_conn_desc("Encryption disabled", event, &desc);
+    }
+    return 0;
+  case BLE_GAP_EVENT_REPEAT_PAIRING:
+    print_conn_desc("Repeat pairing ", event, &desc);
+    ble_store_util_delete_peer(&desc.peer_id_addr);
+    /* Return BLE_GAP_REPEAT_PAIRING_RETRY to indicate that the host should
+     * continue with pairing operation */
+    return BLE_GAP_REPEAT_PAIRING_RETRY;
+
+  default:
+    ESP_LOGE(TAG, "XXX TODO DEFAULT %d", event->type);
+    return 0;
+  }
+}
+
+// GAP events that don't require a valid connection handle
+static int gap_event_handler(struct ble_gap_event *event, void *arg) {
+  /* Handle different GAP event */
+  switch (event->type) {
   /* Disconnect event */
   case BLE_GAP_EVENT_DISCONNECT:
     ESP_LOGI(TAG, "Disconnected from peer; reason=%d", event->disconnect.reason);
-    // TODO find client that disconnected here
-    g_cbs.on_bt_disconnect();
-    return 0;
-
-  /* Connection parameters update event */
-  case BLE_GAP_EVENT_CONN_UPDATE:
-    rc = ble_gap_conn_find(event->conn_update.conn_handle, &desc);
-    if (rc != 0) {
-      ESP_LOGE(TAG, "Connection updated, but failed to by handle, error: %d", rc);
-      return rc;
-    }
-    print_conn_desc("Updated", event, &desc);
+    g_cbs.on_bt_disconnect(&event->disconnect.conn);
     return 0;
 
   /* Advertising complete event */
   case BLE_GAP_EVENT_ADV_COMPLETE:
-    /* Advertising completed, restart advertising */
     ESP_LOGI(TAG, "Advertise complete; reason=%d", event->adv_complete.reason);
     g_cbs.on_bt_adv_complete();
     return 0;
@@ -236,10 +333,14 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
     ESP_LOGD(TAG, "mtu update event; conn_handle=%d cid=%d mtu=%d", event->mtu.conn_handle, event->mtu.channel_id,
              event->mtu.value);
     return 0;
+
+  default:
+    return gap_conn_event_handler(event, arg);
   }
 
   return 0;
 }
+
 
 void bt_start_advertising() {
   int rc;
@@ -276,32 +377,36 @@ void bt_start_advertising() {
     return;
   }
 
-  /* Set device address */
-  rsp_fields.device_addr = g_addr_val;
-  rsp_fields.device_addr_type = g_own_addr_type;
-  rsp_fields.device_addr_is_present = 1;
+  /* Set device address: the example does this, but it's not needed. Addr is already part of the phy header */
+  // rsp_fields.device_addr = g_addr_val;
+  // rsp_fields.device_addr_type = g_own_addr_type;
+  // rsp_fields.device_addr_is_present = 1;
 
-  /* TODO: Set URI */
-  static uint8_t g_uri[] = {BLE_GAP_URI_PREFIX_HTTPS, 'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'c', 'o', 'm'};
+  /* Set advertising interval: similar to device addr, the other end doesn't care about our adv itvl, especially after it already scanned us */
+  // rsp_fields.adv_itvl = BLE_GAP_ADV_ITVL_MS(500);
+  // rsp_fields.adv_itvl_is_present = 1;
+
+  // If adv is too big and the panic belows triggers, it can be commented out
   rsp_fields.uri = g_uri;
-  rsp_fields.uri_len = sizeof(g_uri);
-
-  /* Set advertising interval */
-  rsp_fields.adv_itvl = BLE_GAP_ADV_ITVL_MS(500);
-  rsp_fields.adv_itvl_is_present = 1;
+  rsp_fields.uri_len = g_uri_len;
 
   /* Set scan response fields */
   rc = ble_gap_adv_rsp_set_fields(&rsp_fields);
+  if (rc == BLE_HS_EMSGSIZE) {
+    custom_panic("BLE advertise message too big. You may want to drop the URI from the BT advertisement.");
+  }
   if (rc != 0) {
     ESP_LOGE(TAG, "failed to set scan response data, error code: %d", rc);
     return;
   }
 
   /* Set undirected connectable and general discoverable mode */
+  // https://mynewt.apache.org/latest/network/ble_hs/ble_gap.html#c.ble_gap_adv_params
   adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
   adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
 
   /* Set advertising interval */
+  // TODO - change intervals to see how quickly a device can find it after scanning
   adv_params.itvl_min = BLE_GAP_ADV_ITVL_MS(500);
   adv_params.itvl_max = BLE_GAP_ADV_ITVL_MS(510);
 

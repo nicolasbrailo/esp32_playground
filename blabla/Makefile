@@ -12,5 +12,5 @@ flash:
 	idf.py build flash monitor # Exit w C-]
 
 lint:
-	find . -type f \( -name '*.c' -o -name '*.h' \) -print0 | \
+	find ./main/ -type f \( -name '*.c' -o -name '*.h' \) -print0 | \
 		xargs -0 clang-format -i --style="{BasedOnStyle: LLVM, ColumnLimit: 120}"

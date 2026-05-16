@@ -1,6 +1,8 @@
 #include "c3_zero_led.h"
 
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "led_strip.h"
 
 #define GPIO_LED_PIN 10
@@ -28,6 +30,18 @@ void c3_zero_led_set(uint8_t r, uint8_t g, uint8_t b) {
   led_strip_set_pixel(g_led_strip, 0, r, g, b);
   /* Refresh the strip to send data */
   led_strip_refresh(g_led_strip);
+}
+
+void c3_zero_led_blink(uint8_t n, size_t on_ms, size_t off_ms, uint8_t r, uint8_t g, uint8_t b) {
+  for (uint8_t i=0; i<n; ++i) {
+    /* Set the LED pixel using RGB from 0 (0%) to 255 (100%) for each color */
+    led_strip_set_pixel(g_led_strip, 0, r, g, b);
+    /* Refresh the strip to send data */
+    led_strip_refresh(g_led_strip);
+    vTaskDelay(pdMS_TO_TICKS(on_ms));
+    c3_zero_led_clear();
+    vTaskDelay(pdMS_TO_TICKS(off_ms));
+  }
 }
 
 void c3_zero_led_clear() { led_strip_clear(g_led_strip); }

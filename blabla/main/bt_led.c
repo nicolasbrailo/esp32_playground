@@ -2,6 +2,7 @@
 #include "esp_log.h"
 static const char *TAG = "BT LED CTRL";
 
+#include "esp_timer.h"
 #include "nvs_flash.h"
 
 #include "host/ble_gatt.h"
@@ -20,6 +21,11 @@ static const ble_uuid16_t g_uuid16_svc_automation_io = BLE_UUID16_INIT(0x1815);
 static const ble_uuid128_t led_chr_uuid =
     BLE_UUID128_INIT(0x23, 0xd1, 0xbc, 0xea, 0x5f, 0x78, 0x23, 0x15, 0xde, 0xef, 0x12, 0x12, 0x25, 0x15, 0x00, 0x00);
 static int on_io_scv_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg);
+
+/* Uptime counter */
+static const ble_uuid16_t g_uuid_currtime_svc = BLE_UUID16_INIT(0x1805);
+static const ble_uuid16_t g_uuid_currtime_chr = BLE_UUID16_INIT(0x2A2B);
+static int uptime_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg);
 
 /* Color service */
 static const ble_uuid128_t g_uuid16_svc_led_color =
@@ -50,6 +56,18 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
                                          .val_handle = &led_chr_val_handle},
                                         {0}},
     },
+
+    /* A dummy streaming counter */
+    {.type = BLE_GATT_SVC_TYPE_PRIMARY,
+     .uuid = &g_uuid_currtime_svc.u,
+     .characteristics = (struct ble_gatt_chr_def[]){{.uuid = &g_uuid_currtime_chr.u,
+                                                     .access_cb = uptime_chr_access,
+                                                     .flags = BLE_GATT_CHR_F_READ /* | BLE_GATT_CHR_F_INDICATE */},
+                                                    {
+                                                        0, /* No more characteristics in this service. */
+                                                    }}},
+
+    /* Set LED color */
     {
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
         .uuid = &g_uuid16_svc_led_color.u,
@@ -141,6 +159,12 @@ static int on_io_scv_access(uint16_t conn_handle, uint16_t attr_handle, struct b
     c3_zero_led_clear();
   }
   return 0;
+}
+
+static int uptime_chr_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
+  const int64_t t_ms = esp_timer_get_time() / 1000;
+  const int rc = os_mbuf_append(ctxt->om, &t_ms, sizeof(t_ms));
+  return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
 }
 
 static int on_color_scv_access_name(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt,

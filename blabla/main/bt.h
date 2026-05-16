@@ -16,9 +16,11 @@ struct bt_callbacks {
   void (*on_ble_sync_cb)(uint8_t own_addr_type, uint8_t addr_val[6]);
   void (*on_bt_conn_failed)(const struct ble_gap_conn_desc *conn_desc);
   void (*on_bt_new_conn)(const struct ble_gap_conn_desc *conn_desc);
-  void (*on_bt_disconnect)();
+  void (*on_bt_conn_bonded)(const struct ble_gap_conn_desc *conn_desc);
+  void (*on_bt_disconnect)(const struct ble_gap_conn_desc *conn_desc);
   void (*on_bt_adv_complete)();
 };
 
-esp_err_t bt_init(const char *bt_dev_name, struct bt_callbacks cbs, const struct ble_gatt_svc_def *gatt_svcs);
+esp_err_t bt_init(const char *bt_dev_name, const char *adv_uri, struct bt_callbacks cbs,
+                  const struct ble_gatt_svc_def *gatt_svcs);
 void bt_start_advertising();
