@@ -9,7 +9,7 @@ usb_body_len    = 21;  // how far the connector body extends inward from the +X 
 
 outer_x = esp_short_axis + 2*wall + usb_body_len + 6;
 outer_y = esp_short_axis + 2*wall + 6;
-outer_z = 12;   // box height (bumped to keep interior depth after thicker floor)
+outer_z = 15;   // box height (bumped to keep interior depth after thicker floor)
 floor_thickness = 4;  // thicker than wall so the USB recess doesn't punch through
 lid_gap = 0.2;  // clearance between box and lid (per side)
 
@@ -51,7 +51,7 @@ module box() {
 
         // Floor recess (pocket) for the USB connector body
         // Goes from the inner floor surface down by usb_body_recess
-        translate([outer_x - usb_body_len,
+        translate([outer_x - usb_body_len + 5, // +5 => offset the X dimension to create a small division between batter pocket and USB pocket
                    (outer_y - usb_w) / 2,
                    floor_thickness - usb_body_recess])
             cube([usb_body_len + 0.02, usb_w, usb_body_recess + 0.01]);
@@ -91,7 +91,7 @@ module lid() {
 // -- Build a smaller holder for the ESP, with some room for connections below
 module esp_holder() {
     pcb_raise       = 5;   // how far above the floor the PCB sits (= shelf height)
-    support_l       = 5;
+    support_l       = 6;
     tower_above_pcb = 2;   // tower extends this far above the shelf, alongside the PCB
 
     // PCB (representation), raised by the support
@@ -128,8 +128,8 @@ module esp_holder() {
     base_y_in   = (outer_y - battery_y) / 2;        // battery recess edge (where the base ends)
     slope_y_top = base_y_in + pcb_raise;            // 45° ramp rises pcb_raise in y too
     pcb_y_edge  = wall + 3;                          // tower's inner edge (PCB's -Y edge)
-    retainer_x   = wall + 2 + esp_long_axis/2;
-    retainer_len = esp_long_axis/2;
+    retainer_x   = wall + 7 + esp_long_axis/2;
+    retainer_len = esp_long_axis/3;
 
     // -Y retainer
     translate([retainer_x, 0, 0])
@@ -155,6 +155,36 @@ module esp_holder() {
             [outer_y - pcb_y_edge,  z_shelf],
             [outer_y - pcb_y_edge,  z_top],
             [outer_y - wall,        z_top]
+        ]);
+
+    // X-stopper at the +X end of each retainer: replace the L's last
+    // `stopper_len` with a solid wedge (45° ramp continues all the way
+    // to z_top, no shelf notch). The wedge intrudes into the PCB area
+    // above the shelf, so the PCB butts up against it and can't slide
+    // along X.
+    stopper_len  = 1;
+    stopper_apex = base_y_in + (z_top - z_bot);   // 45° ramp's y at z_top
+
+    // -Y stopper
+    translate([retainer_x + retainer_len - stopper_len, 0, 0])
+    rotate([90, 0, 90])
+    linear_extrude(stopper_len)
+        polygon([
+            [wall,         z_bot],
+            [base_y_in,    z_bot],
+            [stopper_apex, z_top],
+            [wall,         z_top]
+        ]);
+
+    // +Y stopper (mirror)
+    translate([retainer_x + retainer_len - stopper_len, 0, 0])
+    rotate([90, 0, 90])
+    linear_extrude(stopper_len)
+        polygon([
+            [outer_y - wall,         z_bot],
+            [outer_y - base_y_in,    z_bot],
+            [outer_y - stopper_apex, z_top],
+            [outer_y - wall,         z_top]
         ]);
 }
 
