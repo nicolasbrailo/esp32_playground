@@ -1,4 +1,4 @@
-.PHONY: all env-setup flash lint
+.PHONY: all env-setup flash lint dist-clean
 
 all:
 	idf.py build
@@ -14,3 +14,6 @@ flash:
 lint:
 	find ./main/ -type f \( -name '*.c' -o -name '*.h' \) -print0 | \
 		xargs -0 clang-format -i --style="{BasedOnStyle: LLVM, ColumnLimit: 120}"
+
+dist-clean:
+	rm -rf build/ managed_components/ sdkconfig sdkconfig.old
