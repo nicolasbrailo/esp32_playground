@@ -4,13 +4,13 @@
 // --- Parameters ---
 esp_long_axis = 23;
 esp_short_axis = 18;
-wall    = 2;    // wall thickness
+wall    = 1;    // wall thickness
 usb_body_len    = 21;  // how far the connector body extends inward from the +X wall
 
-outer_x = esp_short_axis + 2*wall + usb_body_len + 6;
+outer_x = esp_short_axis + 2*wall + usb_body_len + 15;
 outer_y = esp_short_axis + 2*wall + 6;
 outer_z = 20;   // box height
-floor_thickness = 4;  // thicker than wall so the USB recess doesn't punch through
+floor_thickness = 3;  // thicker than wall so the USB recess doesn't punch through
 lid_gap = 0.2;  // clearance between box and lid (per side)
 
 // USB cutout (on the +X wall, centered on Y)
@@ -23,7 +23,7 @@ usb_body_recess = 2;   // pocket depth (must be < floor_thickness or it punches 
 
 // Battery floor recess (opposite side from USB, below the esp holder)
 battery_x = 30;        // length along X
-battery_y = 20;        // width along Y
+battery_y = 22;        // width along Y
 battery_recess = 2;    // pocket depth (must be < floor_thickness)
 
 
@@ -31,8 +31,8 @@ esp_pcb_raise       = 7;   // how far above the floor the PCB sits (= shelf heig
 
 // Lid lip — perimeter frame nests inside the box walls; middle is hollow
 // to save material and add interior headroom.
-lip_h       = 2;
-lip_frame_w = 2;   // width of the perimeter frame
+lip_h       = 1.5;
+lip_frame_w = 1;   // width of the perimeter frame
 
 // Button plunger — captive in the lid, presses the PCB's on-board button.
 // Plunger is printed separately and drops into the lid hole from inside
@@ -44,7 +44,7 @@ button_top_z          = 12;             // height of the real button's top above
 plunger_shaft_d       = 3;
 plunger_flange_d      = 6;
 plunger_flange_h      = 1;
-plunger_top_above_lid = 6;              // shaft pokes this far above the lid for finger-press
+plunger_top_above_lid = 8;              // shaft pokes this far above the lid for finger-press
 plunger_hole_d        = plunger_shaft_d + 0.4;  // shaft + clearance
 plunger_pad_d         = plunger_flange_d + .0;   // lip pad around the hole that keeps the flange seated
 
@@ -55,9 +55,9 @@ lid_hole_y = outer_y / 2;
 
 // Gills — vertical slots in the +Y half of the lid (opposite the plunger),
 // cut through the lid plate and the lip so the on-board LED shines through.
-gill_count = 6;
+gill_count = 7;
 gill_w     = 2;                                                // slot width along X
-gill_pitch = 4;                                                // X spacing between slot centers
+gill_pitch = 3.5;                                                // X spacing between slot centers
 gill_y_lo  = outer_y / 2 + 1 ;                                  // start past the lid Y midline
 gill_y_hi  = outer_y - wall - 1;                               // end just inside the +Y wall
 gill_x_lo  = (outer_x - ((gill_count - 1) * gill_pitch + gill_w)) / 2 - 10;
@@ -67,7 +67,7 @@ show_box         = true;
 show_esp_holder  = true;
 show_lid         = true;
 show_assembled = false;  // when true, lid is offset for preview
-show_pcbs = true;
+show_pcbs = false;
 
 // --- Box (open-top) ---
 module box() {
@@ -89,9 +89,9 @@ module box() {
         // Floor recess (pocket) for the USB connector body
         // Goes from the inner floor surface down by usb_body_recess
         translate([outer_x - usb_body_len + 5, // +5 => offset the X dimension to create a small division between batter pocket and USB pocket
-                   (outer_y - usb_w) / 2,
+                   (outer_y - usb_w) / 2 - 0.02,
                    floor_thickness - usb_body_recess])
-            cube([usb_body_len + 0.02, usb_w, usb_body_recess + 0.01]);
+            cube([usb_body_len + 0.02, usb_w + 0.02, usb_body_recess + 0.01]);
 
         // Battery floor recess on the -X side, centered on Y
         translate([wall - 0.01,
@@ -146,7 +146,7 @@ module lid() {
                        -lip_h - 0.01])
                 cube([lip_x - 2*lip_frame_w,
                       lip_y - 2*lip_frame_w,
-                      lip_h + 0.01]);
+                      lip_h + 0.02]);
             translate([button_x, button_y, -lip_h - 0.02])
                 cylinder(d=plunger_pad_d, h=lip_h + 0.04, $fn=32);
         }
@@ -177,9 +177,10 @@ module esp_holder() {
     sup_z_top = floor_thickness + esp_pcb_raise;
     support_w = sup_z_top - sup_z_bot;  // 45° overhang cap
 
-    translate([0,
-               wall + 3 + esp_short_axis/2 + support_l/2,
-               0])
+    // -.01 to force wedge to merge with the box
+    translate([0 - .01,
+               wall + 3 + esp_short_axis/2 + support_l/2 -.01,
+               0 - .01])
     rotate([90, 0, 0])
     linear_extrude(support_l)
         polygon([
@@ -187,6 +188,7 @@ module esp_holder() {
             [wall,              sup_z_top],
             [wall + support_w,  sup_z_top]
         ]);
+
 
     // Side retainers on the long edges of the PCB (Y sides).
     // Each is an L sitting on the floor: wide base on the floor strip
@@ -282,8 +284,13 @@ module pcbs() {
 }
 
 // --- Render ---
-if (show_box)        box();
-if (show_esp_holder) esp_holder();
+
+if (show_box) {
+    union() {
+        box();
+        esp_holder();
+    }
+}
 
 if (show_lid) {
     if (show_assembled) {
