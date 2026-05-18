@@ -1,4 +1,4 @@
-#include "c3_zero_led.h"
+#include "common/c3_zero_led.h"
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -10,7 +10,7 @@
 static const char *TAG = "LED";
 static led_strip_handle_t g_led_strip;
 
-void c3_zero_led_init() {
+esp_err_t c3_zero_led_init() {
   ESP_LOGI(TAG, "Configure LED strip");
   led_strip_config_t strip_config = {
       .strip_gpio_num = GPIO_LED_PIN,
@@ -22,8 +22,11 @@ void c3_zero_led_init() {
       .flags.with_dma = false,
   };
 
-  ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &g_led_strip));
+  const esp_err_t rc = led_strip_new_rmt_device(&strip_config, &rmt_config, &g_led_strip);
+  if (rc != ESP_OK)
+    return rc;
   c3_zero_led_clear();
+  return ESP_OK;
 }
 
 void c3_zero_led_set(uint8_t r, uint8_t g, uint8_t b) {

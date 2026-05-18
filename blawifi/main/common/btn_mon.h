@@ -19,4 +19,6 @@ struct btn_mon_hanlder {
   void (*callback)(bool active, void *arg);
 };
 
+// Install a set of callback handlers. No cleanup possible. Callbacks are invoked from a task, not from an interrupt
+// context.
 esp_err_t btn_mon_init(const struct btn_mon_hanlder *hdls, size_t hdls_sz, void *usr_arg);

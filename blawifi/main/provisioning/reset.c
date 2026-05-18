@@ -1,13 +1,13 @@
-#include "provision_reset.h"
+#include "provisioning/reset.h"
 
-#include "c3_zero_led.h"
+#include "common/c3_zero_led.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#include "nvs_flash.h"
-#include "esp_timer.h"
 #include "esp_system.h"
+#include "esp_timer.h"
+#include "nvs_flash.h"
 #include <stdatomic.h>
 
 #include "esp_log.h"
@@ -72,12 +72,13 @@ static esp_err_t nuke_nvs() {
   esp_restart(); // does not return
 }
 
-void provision_maybe_reset(bool active) {
+void provision_maybe_reset_btn_handler(bool active) {
   if (g_cfg_reset_timer == NULL) {
     const esp_timer_create_args_t cfg_reset_args = {
         .callback = &on_config_reset_step1,
         .name = "cfg_reset",
     };
+    atomic_init(&g_step1_engaged, false);
     ESP_ERROR_CHECK(esp_timer_create(&cfg_reset_args, &g_cfg_reset_timer));
   }
 

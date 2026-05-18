@@ -1,10 +1,13 @@
-#include "wifi_provision.h"
+#include "provisioning/wifi.h"
+
+#include "common/c3_zero_led.h"
 
 #include <ctype.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdatomic.h>
 
 #include "esp_check.h"
 #include "esp_log.h"
@@ -16,6 +19,7 @@ static const char *TAG = "wifi-prov";
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
@@ -45,6 +49,40 @@ static bool g_wifi_started = false;
 static void stop_http_server(void);
 static void stop_captive_dns(void);
 static void stop_softap(void);
+
+// --- Blinking light while provisioning mode is active --------------------------------------------------------
+
+static atomic_bool g_provisioning_wifi_led_active = false;
+static SemaphoreHandle_t g_provisioning_wifi_led_done = NULL; // signalled when task exits
+static bool g_provisioning_wifi_led_running = false;          // true between successful xTaskCreate and join
+
+static void provisioning_wifi_led(void *arg) {
+  while (atomic_load_explicit(&g_provisioning_wifi_led_active, memory_order_relaxed)) {
+    c3_zero_led_blink(/*n=*/1, /*on_ms=*/200, /*off_ms=*/0, /*r=*/10, /*g=*/10, /*b=*/10);
+    if (!atomic_load_explicit(&g_provisioning_wifi_led_active, memory_order_relaxed)) break;
+    c3_zero_led_blink(/*n=*/1, /*on_ms=*/100, /*off_ms=*/0, /*r=*/40, /*g=*/40, /*b=*/40);
+  }
+  xSemaphoreGive(g_provisioning_wifi_led_done);
+  vTaskDelete(NULL);
+}
+
+static void provisioning_wifi_led_start(void) {
+  atomic_store_explicit(&g_provisioning_wifi_led_active, true, memory_order_relaxed);
+  if (xTaskCreate(provisioning_wifi_led, "provisioning_wifi_led", 1 * 1024, NULL, 3, NULL) == pdPASS) {
+    g_provisioning_wifi_led_running = true;
+  } else {
+    ESP_LOGW(TAG, "Failed to start provisioning_wifi_led task");
+    atomic_store_explicit(&g_provisioning_wifi_led_active, false, memory_order_relaxed);
+  }
+}
+
+static void provisioning_wifi_led_stop(void) {
+  if (!g_provisioning_wifi_led_running)
+    return;
+  atomic_store_explicit(&g_provisioning_wifi_led_active, false, memory_order_relaxed);
+  xSemaphoreTake(g_provisioning_wifi_led_done, portMAX_DELAY);
+  g_provisioning_wifi_led_running = false;
+}
 
 // --- NVS --------------------------------------------------------------------
 
@@ -90,7 +128,8 @@ static esp_err_t save_cfg(const struct provisioning_config *cfg) {
     return httpd_resp_send(req, (const char *)fname##_start, fname##_end - fname##_start);                             \
   }
 
-static esp_err_t www_handler_reg(httpd_handle_t server, const char *uri, int method, esp_err_t (*handler)(httpd_req_t *)) {
+static esp_err_t www_handler_reg(httpd_handle_t server, const char *uri, int method,
+                                 esp_err_t (*handler)(httpd_req_t *)) {
   const httpd_uri_t cfg = {
       .uri = uri,
       .method = method,
@@ -376,6 +415,8 @@ static void stop_softap(void) {
     esp_netif_destroy_default_wifi(g_ap_netif);
     g_ap_netif = NULL;
   }
+
+  provisioning_wifi_led_stop();
 }
 
 static esp_err_t start_softap(void) {
@@ -420,6 +461,7 @@ static esp_err_t start_softap(void) {
   ESP_GOTO_ON_ERROR(configure_dhcp_dns(g_ap_netif), fail, TAG, "configure_dhcp_dns failed");
 
   ESP_LOGI(TAG, "SoftAP started. SSID=\"%s\" (open). Captive portal at http://%s/", ssid, AP_IP);
+  provisioning_wifi_led_start();
   return ESP_OK;
 fail:
   stop_softap();
@@ -430,6 +472,8 @@ fail:
 
 esp_err_t wifi_provision_init(on_provisioning_complete_t cb) {
   g_complete_cb = cb;
+  atomic_init(&g_provisioning_wifi_led_active, false);
+  g_provisioning_wifi_led_done = xSemaphoreCreateBinary();
 
   // If a previous provisioning is persisted, skip the captive portal entirely
   // and hand the cached config straight to the caller.

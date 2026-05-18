@@ -1,8 +1,8 @@
-#include "btn_mon.h"
-#include "c3_zero_led.h"
-#include "provision_reset.h"
+#include "common/btn_mon.h"
+#include "common/c3_zero_led.h"
+#include "provisioning/reset.h"
+#include "provisioning/wifi.h"
 #include "wifi.h"
-#include "wifi_provision.h"
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -34,12 +34,23 @@ static void on_provisioning_complete(const struct provisioning_config *cfg) {
   }
 }
 
-static void on_boot_btn(bool active, void *usr) { provision_maybe_reset(active); }
+static void on_boot_btn(bool active, void *usr) {
+  provision_maybe_reset_btn_handler(active);
+  c3_zero_led_blink(/*n=*/4, /*on_ms=*/200, /*off_ms=*/100, /*r=*/50, /*g=*/80, /*b=*/0);
+}
 
 void app_main();
 void app_main() {
+  // Initialize NVS
+  esp_err_t ret = nvs_flash_init();
+  if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    ESP_ERROR_CHECK(nvs_flash_erase());
+    ret = nvs_flash_init();
+  }
+  ESP_ERROR_CHECK(ret);
+
   // Start up: quick white flash to indicate we're starting main
-  c3_zero_led_init();
+  ESP_ERROR_CHECK(c3_zero_led_init());
   c3_zero_led_blink(/*n=*/1, /*on_ms=*/100, /*off_ms=*/100, /*r=*/50, /*g=*/50, /*b=*/50);
 
   const struct btn_mon_hanlder handlers[] = {
@@ -51,15 +62,5 @@ void app_main() {
       },
   };
   ESP_ERROR_CHECK(btn_mon_init(handlers, sizeof(handlers) / sizeof(handlers[0]), NULL));
-
-  return;
-  // Initialize NVS
-  esp_err_t ret = nvs_flash_init();
-  if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-    ESP_ERROR_CHECK(nvs_flash_erase());
-    ret = nvs_flash_init();
-  }
-  ESP_ERROR_CHECK(ret);
-
   ESP_ERROR_CHECK(wifi_provision_init(&on_provisioning_complete));
 }
