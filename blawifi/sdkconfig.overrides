@@ -17,24 +17,21 @@ CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
 CONFIG_BOOTLOADER_LOG_LEVEL=2
 
-# --- mbedTLS TLS layer disabled --------------------------------------------
-# We talk to the broker via plain mqtt:// (LAN-trusted), no https://,
-# no wss://. Dropping the TLS protocol layer saves ~150 KB; crypto
-# primitives (AES/SHA/ECP/...) stay linked for WPA2 and future BLE pairing.
-# Caveat: ANY mqtts/https/wss URL will fail to connect.
-CONFIG_MBEDTLS_TLS_DISABLED=y
-# CONFIG_MBEDTLS_TLS_ENABLED is not set
-# CONFIG_MBEDTLS_TLS_SERVER is not set
-# CONFIG_MBEDTLS_TLS_CLIENT is not set
-# CONFIG_MBEDTLS_TLS_SERVER_AND_CLIENT is not set
+# --- mbedTLS TLS layer: forced on by esp-tls -------------------------------
+# We never use TLS at runtime (broker is plain mqtt://), but esp-tls — pulled
+# in transitively by esp-mqtt — does `select MBEDTLS_TLS_ENABLED`. Kconfig
+# `select` overrides any user disable, so trying to turn TLS off here gets
+# silently ignored and breaks the build with a key-exchange #error. Leave
+# TLS_ENABLED at its IDF default (y) and trim only the independent options
+# below.
 
-# --- mbedTLS key-exchange suites: dead code with TLS off -------------------
-# These only matter for the TLS handshake. With TLS disabled they're pure
-# bloat — RSA tables, ECDHE state machines, etc.
+# --- mbedTLS key exchanges: keep one, drop the RSA-based ones --------------
+# mbedtls_check_config.h #errors if TLS1_2 is on with zero key-exchange
+# methods. Keep ECDHE_ECDSA (default y) as the "one method" so the check
+# passes. Drop RSA-only and ECDHE-RSA ciphersuites — they require PKCS1
+# (which we disable below) and we never use them anyway.
 # CONFIG_MBEDTLS_KEY_EXCHANGE_RSA is not set
-# CONFIG_MBEDTLS_KEY_EXCHANGE_ELLIPTIC_CURVE is not set
 # CONFIG_MBEDTLS_KEY_EXCHANGE_ECDHE_RSA is not set
-# CONFIG_MBEDTLS_KEY_EXCHANGE_ECDHE_ECDSA is not set
 
 # --- mbedTLS EC curves: only P-256 retained --------------------------------
 # BLE pairing (LE Secure Connections) requires SECP256R1 (kept by default).
