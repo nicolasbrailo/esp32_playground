@@ -4,10 +4,10 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdatomic.h>
 
 #include "esp_check.h"
 #include "esp_log.h"
@@ -59,7 +59,8 @@ static bool g_provisioning_wifi_led_running = false;          // true between su
 static void provisioning_wifi_led(void *arg) {
   while (atomic_load_explicit(&g_provisioning_wifi_led_active, memory_order_relaxed)) {
     c3_zero_led_blink(/*n=*/1, /*on_ms=*/200, /*off_ms=*/0, /*r=*/10, /*g=*/10, /*b=*/10);
-    if (!atomic_load_explicit(&g_provisioning_wifi_led_active, memory_order_relaxed)) break;
+    if (!atomic_load_explicit(&g_provisioning_wifi_led_active, memory_order_relaxed))
+      break;
     c3_zero_led_blink(/*n=*/1, /*on_ms=*/100, /*off_ms=*/0, /*r=*/40, /*g=*/40, /*b=*/40);
   }
   xSemaphoreGive(g_provisioning_wifi_led_done);

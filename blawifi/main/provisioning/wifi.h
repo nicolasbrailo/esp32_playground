@@ -17,4 +17,3 @@ typedef void (*on_provisioning_complete_t)(const struct provisioning_config *cfg
 // invoked after the users finishes configuration. When the callback is invoked, the dummy AP is already down.
 // The LED will breath white while provisioning mode is active
 esp_err_t wifi_provision_init(on_provisioning_complete_t cb);
-

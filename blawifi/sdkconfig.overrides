@@ -1,0 +1,82 @@
+# --------------------------------------------------------------------------
+# Project-specific Kconfig overrides. Layered on top of sdkconfig.defaults
+# via SDKCONFIG_DEFAULTS in the top-level CMakeLists.txt.
+#
+# Only put values here that we actually want different from the ESP-IDF
+# defaults — keeps the diff readable and explains *why* each is changed.
+# --------------------------------------------------------------------------
+
+# --- Build: optimize for binary size ---------------------------------------
+# Default IDF build is -Og (debug-friendly). The C3 Zero's 1 MB factory app
+# slot was overflowing; -Os trims 10–25% off every component.
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# --- Bootloader: quiet the boot banner --------------------------------------
+# Bootloader's I () lines printed on every reset add no diagnostic value.
+# WARN keeps any failure visible.
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+CONFIG_BOOTLOADER_LOG_LEVEL=2
+
+# --- mbedTLS TLS layer disabled --------------------------------------------
+# We talk to the broker via plain mqtt:// (LAN-trusted), no https://,
+# no wss://. Dropping the TLS protocol layer saves ~150 KB; crypto
+# primitives (AES/SHA/ECP/...) stay linked for WPA2 and future BLE pairing.
+# Caveat: ANY mqtts/https/wss URL will fail to connect.
+CONFIG_MBEDTLS_TLS_DISABLED=y
+# CONFIG_MBEDTLS_TLS_ENABLED is not set
+# CONFIG_MBEDTLS_TLS_SERVER is not set
+# CONFIG_MBEDTLS_TLS_CLIENT is not set
+# CONFIG_MBEDTLS_TLS_SERVER_AND_CLIENT is not set
+
+# --- mbedTLS key-exchange suites: dead code with TLS off -------------------
+# These only matter for the TLS handshake. With TLS disabled they're pure
+# bloat — RSA tables, ECDHE state machines, etc.
+# CONFIG_MBEDTLS_KEY_EXCHANGE_RSA is not set
+# CONFIG_MBEDTLS_KEY_EXCHANGE_ELLIPTIC_CURVE is not set
+# CONFIG_MBEDTLS_KEY_EXCHANGE_ECDHE_RSA is not set
+# CONFIG_MBEDTLS_KEY_EXCHANGE_ECDHE_ECDSA is not set
+
+# --- mbedTLS EC curves: only P-256 retained --------------------------------
+# BLE pairing (LE Secure Connections) requires SECP256R1 (kept by default).
+# All other curves carry multi-KB precomputed tables and are unused here.
+# CONFIG_MBEDTLS_ECP_DP_SECP384R1_ENABLED is not set
+# CONFIG_MBEDTLS_ECP_DP_SECP521R1_ENABLED is not set
+# CONFIG_MBEDTLS_ECP_DP_SECP256K1_ENABLED is not set
+# CONFIG_MBEDTLS_ECP_DP_BP256R1_ENABLED is not set
+# CONFIG_MBEDTLS_ECP_DP_BP384R1_ENABLED is not set
+# CONFIG_MBEDTLS_ECP_DP_BP512R1_ENABLED is not set
+# CONFIG_MBEDTLS_ECP_DP_CURVE25519_ENABLED is not set
+
+# --- mbedTLS misc: trim what neither WPA2 nor BLE needs --------------------
+# SHA-512: not used by WPA2 (HMAC-SHA1/256) or BLE SMP. PKCS5/7/1 are
+# TLS/certificate parsing utilities — dead with TLS disabled.
+# CONFIG_MBEDTLS_SHA512_C is not set
+# CONFIG_MBEDTLS_PKCS5_C is not set
+# CONFIG_MBEDTLS_PKCS7_C is not set
+# CONFIG_MBEDTLS_PKCS1_V15 is not set
+# CONFIG_MBEDTLS_PKCS1_V21 is not set
+
+# --- WiFi: only the modes/features we actually use -------------------------
+# We use WPA2-PSK in STA mode and an open SoftAP for first-boot provisioning.
+# Drop:
+#   - Enterprise auth (EAP/802.1X): no corporate networks.
+#   - SoftAP SAE (WPA3): our provisioning AP is intentionally open.
+#   - AMPDU TX/RX: aggregation helps high-throughput TCP; we publish a few
+#     bytes/min over MQTT. Lower throughput, smaller binary.
+# CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT is not set
+# CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT is not set
+# CONFIG_ESP_WIFI_AMPDU_TX_ENABLED is not set
+# CONFIG_ESP_WIFI_AMPDU_RX_ENABLED is not set
+
+# --- lwIP: IPv4 only -------------------------------------------------------
+# The captive portal and MQTT broker are reached over IPv4. IPv6 adds
+# code + RAM (router solicitation, ND6 tables) for no upside here.
+# CONFIG_LWIP_IPV6 is not set
+
+# --- Bluetooth: NimBLE stack enabled ---------------------------------------
+# IDF default is BT off. We turn it on for upcoming BLE features and pick
+# NimBLE over Bluedroid — smaller, more modern, ESP32-C3-friendly.
+# The Bluedroid / controller-only alternatives are automatically excluded
+# when NimBLE is selected, so no need to disable them explicitly.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y

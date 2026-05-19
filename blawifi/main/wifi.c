@@ -9,7 +9,7 @@
 #include "esp_wifi.h"
 
 struct wifi_cbs g_cbs;
-static const char *TAG = "wifi-sta";
+static const char *TAG = "blawifi";
 
 // Cached SSID for log messages; the driver keeps its own copy of the config.
 static char g_ssid[32];
@@ -123,6 +123,11 @@ esp_err_t wifi_connect(const char *ap_name, const char *ap_pwd, struct wifi_cbs 
   wifi_config_t sta_cfg = {0};
   strlcpy((char *)sta_cfg.sta.ssid, ap_name, sizeof(sta_cfg.sta.ssid));
   strlcpy((char *)sta_cfg.sta.password, ap_pwd, sizeof(sta_cfg.sta.password));
+  // Sweep all channels (vs. fast-scan defaulting to the last-known channel)
+  // and pick the strongest BSSID — avoids wrong-channel retries on cold boot.
+  sta_cfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+  sta_cfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+  sta_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
 
   ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), TAG, "esp_wifi_set_mode failed");
   ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg), TAG, "esp_wifi_set_config failed");
