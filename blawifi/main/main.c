@@ -28,6 +28,14 @@
 #define BATT_ADC_CHANNEL ADC_CHANNEL_2 // GPIO2
 #define BATT_ADC_ATTEN ADC_ATTEN_DB_12 // ~0-3.1V input range
 
+// PIR wiring:
+//   GPIO8  = VCC  (strapping pin requires HIGH at boot — matches our usage)
+//   GPIO6  = signal (general-purpose, no peripheral conflicts)
+//   GPIO10 = GND  (no strapping role, safe to drive LOW)
+#define PIR_VCC_GPIO 8
+#define PIR_GPIO 6
+#define PIR_GND_GPIO 10
+
 static adc_oneshot_unit_handle_t s_adc;
 static adc_cali_handle_t s_cali;
 
@@ -48,6 +56,24 @@ static void battery_init(void) {
   };
   ESP_ERROR_CHECK(adc_cali_create_scheme_curve_fitting(&cali_cfg, &s_cali));
 }
+
+static void pir_power_init(void) {
+  const gpio_config_t cfg = {
+      .pin_bit_mask = (1ULL << PIR_VCC_GPIO) | (1ULL << PIR_GND_GPIO),
+      .mode = GPIO_MODE_OUTPUT,
+      .pull_up_en = GPIO_PULLUP_DISABLE,
+      .pull_down_en = GPIO_PULLDOWN_DISABLE,
+      .intr_type = GPIO_INTR_DISABLE,
+  };
+  ESP_ERROR_CHECK(gpio_config(&cfg));
+  // Drive strength levels: CAP_0 ~5mA, CAP_1 ~10mA, CAP_2 ~20mA (default), CAP_3 ~40mA.
+  // CAP_3 keeps the rail close to 3.3V when used as VCC for a sensor.
+  gpio_set_drive_capability(PIR_VCC_GPIO, GPIO_DRIVE_CAP_3);
+  gpio_set_level(PIR_GND_GPIO, 0);
+  gpio_set_level(PIR_VCC_GPIO, 1);
+  vTaskDelay(pdMS_TO_TICKS(20));
+}
+
 
 // Returns battery voltage in millivolts (3000-4200 typical for LiPo).
 // Averages 16 samples to smooth ADC noise from the 50k source impedance.
@@ -117,7 +143,10 @@ static void on_boot_btn(bool active, void *usr) {
   c3_zero_led_blink(/*n=*/4, /*on_ms=*/200, /*off_ms=*/100, /*r=*/50, /*g=*/80, /*b=*/0);
 }
 
-static void on_pir(bool active, void *usr) { mqtt_report_presence(active); }
+static void on_pir(bool active, void *usr) {
+  ESP_LOGI(TAG, "PIR reports %sactive", active? "" : "in");
+  mqtt_report_presence(active);
+}
 
 void app_main(void);
 void app_main(void) {
@@ -156,5 +185,6 @@ void app_main(void) {
   ESP_ERROR_CHECK(wifi_provision_init(&on_provisioning_complete));
 
   battery_init();
+  pir_power_init();
   xTaskCreate(battery_task, "batt", 4096, NULL, 5, NULL);
 }
