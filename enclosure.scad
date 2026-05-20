@@ -4,14 +4,23 @@
 // --- Parameters ---
 esp_long_axis = 23;
 esp_short_axis = 18;
-wall    = 1;    // wall thickness
+wall    = 1.5;    // wall thickness
 usb_body_len    = 21;  // how far the connector body extends inward from the +X wall
 
 outer_x = esp_short_axis + 2*wall + usb_body_len + 15;
 outer_y = esp_short_axis + 2*wall + 6;
 outer_z = 20;   // box height
+lid_gap = 0.1;  // clearance between box and lid (per side)
+
+/* Floor can bow
+  Fixes, roughly in order of impact:                                           
+  1. Thicken the floor — in your slicer set bottom layers to 5–6 (or in CAD make it ≥1.2 mm). Single biggest win for thin floors.                                                                                                               
+  2. Add a brim (5–8 mm) to hold edges down while it cools.                                                                                         
+  3. Heated bed at the right temp — PLA 55–65 °C, PETG 70–80 °C, ABS 100–110 °C + enclosure.                                                                                     
+  4. Slow the first layer (15–20 mm/s) and disable the part-cooling fan for the first 3–5 layers.  
+*/
 floor_thickness = 3;  // thicker than wall so the USB recess doesn't punch through
-lid_gap = 0.2;  // clearance between box and lid (per side)
+
 
 // USB cutout (on the +X wall, centered on Y)
 usb_w = 12;     // aperture width
@@ -49,7 +58,7 @@ plunger_hole_d        = plunger_shaft_d + 0.4;  // shaft + clearance
 plunger_pad_d         = plunger_flange_d + .0;   // lip pad around the hole that keeps the flange seated
 
 // Center hole — through the lid in the -Y half (opposite the gills).
-lid_hole_d = 12;
+lid_hole_d = 12.5;
 lid_hole_x = 3 * outer_x / 4;
 lid_hole_y = outer_y / 2;
 
@@ -88,7 +97,7 @@ module box() {
 
         // Floor recess (pocket) for the USB connector body
         // Goes from the inner floor surface down by usb_body_recess
-        translate([outer_x - usb_body_len + 5, // +5 => offset the X dimension to create a small division between batter pocket and USB pocket
+        translate([outer_x - usb_body_len,
                    (outer_y - usb_w) / 2 - 0.02,
                    floor_thickness - usb_body_recess])
             cube([usb_body_len + 0.02, usb_w + 0.02, usb_body_recess + 0.01]);
@@ -99,6 +108,24 @@ module box() {
                    floor_thickness - battery_recess])
             cube([battery_x + 0.01, battery_y, battery_recess + 0.01]);
     }
+    
+    // Holder for back of usb pcb
+    translate([36, 4.2, 7.5])
+    rotate([0, 90, 0])
+    linear_extrude(5.5)
+        polygon([
+            [3, 4.5],
+            [5, 3],
+            [3, 3],
+        ]);
+    translate([41.5, 22.8, 7.5])
+    rotate([180, 90, 0])
+    linear_extrude(5.5)
+        polygon([
+            [3, 4.5],
+            [5, 3],
+            [3, 3],
+        ]);
 }
 
 // --- Lid (sits on top, with a lip that drops into the box) ---
